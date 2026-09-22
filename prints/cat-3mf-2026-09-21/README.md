@@ -1,6 +1,28 @@
 # Cat prints
 
-Three meshes from the orange Bengal / tabby photo.
+Meshes from the orange Bengal / tabby photo.
+
+## Figurine
+
+`cat-figurine.3mf` is a solid sitting cat reconstructed from the photo (Hunyuan3D-2, 30 steps, octree 256, seed 1234). The same solid is in `cat-figurine.stl` and `cat-figurine.glb`. It is a closed body, about 274,000 mm³, with thickness on every axis. Z is up and the underside is a flat face on Z = 0.
+
+| Axis | Role | Size |
+| --- | --- | --- |
+| X | width, head toward −X | 100.1 mm |
+| Y | depth | 69.2 mm |
+| Z | height | 100.0 mm |
+
+27,022 triangles. The flat underside is about 2,300 mm² and the center of mass sits over it.
+
+**Print it upright.** Put the flat face on the bed. The head is the taller end.
+
+- Layer height: 0.20 mm
+- Line width: 0.4 mm
+- Walls: 3 or 4
+- Infill: 15%
+- Brim: 4 mm
+- Supports: on for the chest and chin. Those undersides overhang. The flat base does not need a raft.
+- Filament: any PLA
 
 ## Upright standee
 
@@ -33,6 +55,6 @@ Look at the front from X = 0. The cat’s head is on the left.
 
 `cat-lithophane.3mf` keeps the black background as a solid frame. It is 100.4 mm wide, 126.0 mm tall, and 1.0–3.4 mm thick, already standing on a 3.2 mm foot. Put that foot on the bed and leave the plate vertical. **Layer height: 0.16 mm.** Use a 5–8 mm brim. The flat face is the front, and the cat’s head is on the left when you look at that face. White or natural PLA, 100% infill, 0.4 mm lines.
 
-A lithophane shows the photo only when light comes through it. The upright file is the one that stands on a desk in ordinary light.
+A lithophane shows the photo only when light comes through it. `cat-figurine.3mf` is the solid cat for a desk. `cat-upright.3mf` is the flat standee.
 
 Rebuild with `python3 generate_lithophane.py photo.png` for the framed plate, `--silhouette` for the flat cut-out, or `--upright` for the standee. The script checks that each mesh is a non-empty watertight solid before it writes the 3MF.
