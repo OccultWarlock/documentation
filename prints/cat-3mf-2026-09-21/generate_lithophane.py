@@ -4,10 +4,11 @@
 Brightness becomes thickness: bright fur and the green eyes are thin
 (they glow when backlit); dark fur is thicker.
 
-Two shapes:
+Three shapes:
 
 - plate: rectangular frame, black background kept, printed standing up
 - silhouette: background cut away so the outline is the cat, printed flat
+- upright: the same cut-out, 4 mm thick, standing on a base like a photo standee
 """
 
 from __future__ import annotations
@@ -34,6 +35,17 @@ TONE_GAMMA = 0.8
 # Silhouette long side. Pitch stays near one nozzle width.
 SILHOUETTE_LONG_MM = 130.0
 SILHOUETTE_CELLS = int(round(SILHOUETTE_LONG_MM / PITCH_MM))
+# Upright standee. The cat is a constant-thickness cut-out; the plinth
+# swallows the paw gaps so the outline above it prints without supports.
+UPRIGHT_HEIGHT_MM = 120.0
+UPRIGHT_THICK_MM = 4.0
+BASE_HEIGHT_MM = 8.0
+BASE_FRONT_MM = 22.0
+BASE_REAR_MM = 28.0
+BASE_SIDE_MM = 5.0
+FOOT_WIDTH_MM = 28.0
+FOOT_RISE_MM = 32.0
+CAT_BOTTOM_MM = 1.0
 
 
 def luminance_over_black(path: Path) -> np.ndarray:
@@ -612,6 +624,157 @@ def write_silhouette_preview(thickness: np.ndarray, mask: np.ndarray, path: Path
     Image.fromarray(rgba, mode="RGBA").save(path)
 
 
+def _box(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, zmax: float) -> trimesh.Trimesh:
+    extents = np.array([xmax - xmin, ymax - ymin, zmax - zmin], dtype=np.float64)
+    center = np.array([(xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2])
+    box = trimesh.creation.box(extents=extents)
+    box.apply_translation(center)
+    return box
+
+
+def _triangle_prism(points_xz: np.ndarray, y0: float, y1: float) -> trimesh.Trimesh:
+    """Watertight prism. points_xz are three (x, z) corners; Y is the extrusion."""
+    pts = np.asarray(points_xz, dtype=np.float64).reshape(3, 2)
+    signed = (pts[1, 0] - pts[0, 0]) * (pts[2, 1] - pts[0, 1]) - (pts[1, 1] - pts[0, 1]) * (
+        pts[2, 0] - pts[0, 0]
+    )
+    if signed < 0:
+        pts = pts[[0, 2, 1]]
+    verts = np.zeros((6, 3), dtype=np.float64)
+    verts[:3, 0] = pts[:, 0]
+    verts[:3, 1] = y0
+    verts[:3, 2] = pts[:, 1]
+    verts[3:, 0] = pts[:, 0]
+    verts[3:, 1] = y1
+    verts[3:, 2] = pts[:, 1]
+    cap = np.cross(verts[1] - verts[0], verts[2] - verts[0])
+    y0_face = [0, 2, 1] if cap[1] > 0 else [0, 1, 2]
+    faces = [y0_face, [y0_face[0] + 3, y0_face[2] + 3, y0_face[1] + 3]]
+    a, b, c = y0_face
+    for i, j in ((a, b), (b, c), (c, a)):
+        faces.append([j, i, i + 3])
+        faces.append([j, i + 3, j + 3])
+    mesh = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces, dtype=np.int64), process=False)
+    if mesh.volume < 0:
+        mesh.invert()
+    return mesh
+
+
+def _orient_cutout_upright(mesh: trimesh.Trimesh, front_x: float, bottom_z: float) -> trimesh.Trimesh:
+    """Stand a flat extrusion up. Head (low original X) ends on the viewer's left."""
+    old = np.array(mesh.vertices, dtype=np.float64, copy=True)
+    updated = np.column_stack(
+        [
+            old[:, 2] + front_x,
+            old[:, 0].max() - old[:, 0],
+            old[:, 1] + bottom_z,
+        ]
+    )
+    mesh.vertices = updated
+    if mesh.volume < 0:
+        mesh.invert()
+    return mesh
+
+
+def build_upright_standee(path: Path) -> tuple[trimesh.Trimesh, dict]:
+    """Cat cut-out, 4 mm thick, on a plinth with a rear foot. Z is up."""
+    _thickness, mask, _pitch = prepare_silhouette(path)
+    rows, cols = mask.shape
+    cat_height = UPRIGHT_HEIGHT_MM - CAT_BOTTOM_MM
+    pitch = cat_height / rows
+    extrusion = build_silhouette_mesh(np.full(mask.shape, UPRIGHT_THICK_MM), mask, pitch)
+    cat = _orient_cutout_upright(extrusion, BASE_FRONT_MM, CAT_BOTTOM_MM)
+    if not cat.is_watertight or cat.volume <= 0:
+        raise SystemExit("upright cat cut-out is not a solid")
+
+    width = float(cols * pitch)
+    x1 = BASE_FRONT_MM + UPRIGHT_THICK_MM + BASE_REAR_MM
+    y0 = -BASE_SIDE_MM
+    y1 = width + BASE_SIDE_MM
+    base = _box(0.0, y0, 0.0, x1, y1, BASE_HEIGHT_MM)
+
+    foot_y0 = width / 2 - FOOT_WIDTH_MM / 2
+    foot_y1 = width / 2 + FOOT_WIDTH_MM / 2
+    cat_back = BASE_FRONT_MM + UPRIGHT_THICK_MM
+    foot = _triangle_prism(
+        np.array(
+            [
+                [cat_back - 1.5, BASE_HEIGHT_MM - 3.0],
+                [cat_back - 1.5, BASE_HEIGHT_MM + FOOT_RISE_MM],
+                [x1 - 0.2, 4.0],
+            ]
+        ),
+        foot_y0,
+        foot_y1,
+    )
+    if not foot.is_watertight or foot.volume <= 0:
+        raise SystemExit("rear foot is not a solid")
+
+    merged = trimesh.boolean.union([cat, base, foot], engine="manifold")
+    if isinstance(merged, trimesh.Scene):
+        merged = merged.dump(concatenate=True)
+    merged.update_faces(merged.nondegenerate_faces())
+    merged.remove_unreferenced_vertices()
+    if merged.volume < 0:
+        merged.invert()
+    info = {
+        "width": width,
+        "base": (0.0, y0, 0.0, x1, y1, BASE_HEIGHT_MM),
+        "pitch": pitch,
+    }
+    return merged, info
+
+
+def assert_upright(mesh: trimesh.Trimesh, info: dict) -> None:
+    # The plinth closes the bottom of the gap under the chest, so the
+    # standee is a solid with one front-to-back opening. Euler characteristic 0.
+    assert_solid(mesh, euler=0)
+    if mesh.body_count != 1:
+        raise SystemExit(f"standee has {mesh.body_count} separate pieces")
+    height = float(mesh.extents[2])
+    if not (100.0 <= height <= 130.0):
+        raise SystemExit(f"standee height {height:.2f} mm is outside 100–130 mm")
+    if float(mesh.bounds[0, 2]) < -0.05:
+        raise SystemExit("standee extends below the desk")
+    xmin, ymin, _zmin, xmax, ymax, _zmax = info["base"]
+    center = mesh.center_mass
+    if not (xmin + 8.0 < center[0] < xmax - 8.0 and ymin + 8.0 < center[1] < ymax - 8.0):
+        raise SystemExit(f"center of mass {center} sits outside the base")
+    width, depth, tall = (float(value) for value in (mesh.extents[1], mesh.extents[0], mesh.extents[2]))
+    print(
+        f"mesh ok  vertices={len(mesh.vertices)} faces={len(mesh.faces)} "
+        f"volume={mesh.volume:.1f} mm^3  "
+        f"size={depth:.2f} x {width:.2f} x {tall:.2f} mm (X depth x Y width x Z height)  "
+        f"center_of_mass_x={center[0]:.1f}"
+    )
+
+
+def write_upright_preview(mesh: trimesh.Trimesh, path: Path) -> None:
+    """Front and side snapshots. Front view puts the viewer's left on the left."""
+    verts = mesh.vertices
+    span = 420
+
+    def paint(axis_h: int, axis_v: int, flip_h: bool) -> np.ndarray:
+        h = verts[:, axis_h]
+        v = verts[:, axis_v]
+        h0, h1 = float(h.min()), float(h.max())
+        v0, v1 = float(v.min()), float(v.max())
+        image = np.full((span, span, 3), 245, dtype=np.uint8)
+        cols = (h - h0) / max(h1 - h0, 1e-6)
+        if flip_h:
+            cols = 1.0 - cols
+        rows = 1.0 - (v - v0) / max(v1 - v0, 1e-6)
+        px = np.clip((cols * (span - 1)).astype(int), 0, span - 1)
+        py = np.clip((rows * (span - 1)).astype(int), 0, span - 1)
+        image[py, px] = (30, 30, 30)
+        return image
+
+    front = paint(1, 2, flip_h=True)
+    side = paint(0, 2, flip_h=False)
+    gap = np.full((span, 12, 3), 245, dtype=np.uint8)
+    Image.fromarray(np.concatenate([front, gap, side], axis=1), mode="RGB").save(path)
+
+
 def _load_mesh(path: Path) -> trimesh.Trimesh:
     loaded = trimesh.load(path, force="mesh")
     if isinstance(loaded, trimesh.Scene):
@@ -625,7 +788,12 @@ def main() -> None:
     parser.add_argument(
         "--silhouette",
         action="store_true",
-        help="cut away the background and write only the cat",
+        help="cut away the background and write only the cat, lying flat",
+    )
+    parser.add_argument(
+        "--upright",
+        action="store_true",
+        help="cut-out standee that sits upright on a base",
     )
     parser.add_argument("-o", "--output", type=Path, default=None)
     parser.add_argument(
@@ -635,12 +803,30 @@ def main() -> None:
         help="optional grayscale preview of the thickness map",
     )
     args = parser.parse_args()
+    if args.upright and args.silhouette:
+        raise SystemExit("choose either --upright or --silhouette")
     folder = Path(__file__).resolve().parent
     if args.output is None:
-        name = "cat-lithophane-no-bg.3mf" if args.silhouette else "cat-lithophane.3mf"
+        if args.upright:
+            name = "cat-upright.3mf"
+        elif args.silhouette:
+            name = "cat-lithophane-no-bg.3mf"
+        else:
+            name = "cat-lithophane.3mf"
         args.output = folder / name
 
-    if args.silhouette:
+    if args.upright:
+        mesh, info = build_upright_standee(args.image)
+        assert_upright(mesh, info)
+        if args.preview is not None:
+            write_upright_preview(mesh, args.preview)
+            print(f"preview {args.preview}")
+        geom_name = "cat-upright"
+
+        def check(loaded: trimesh.Trimesh) -> None:
+            assert_upright(loaded, info)
+
+    elif args.silhouette:
         self_test_silhouette()
         thickness, mask, pitch = prepare_silhouette(args.image)
         print(
