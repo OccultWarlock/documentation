@@ -637,7 +637,7 @@ def main() -> None:
     args = parser.parse_args()
     folder = Path(__file__).resolve().parent
     if args.output is None:
-        name = "cat-lithophane-silhouette.3mf" if args.silhouette else "cat-lithophane.3mf"
+        name = "cat-lithophane-no-bg.3mf" if args.silhouette else "cat-lithophane.3mf"
         args.output = folder / name
 
     if args.silhouette:
@@ -652,7 +652,7 @@ def main() -> None:
             print(f"preview {args.preview}")
         mesh = build_silhouette_mesh(thickness, mask, pitch)
         assert_silhouette(mesh)
-        geom_name = "cat-lithophane-silhouette"
+        geom_name = "cat-lithophane-no-bg"
         check = assert_silhouette
     else:
         lum = luminance_over_black(args.image)

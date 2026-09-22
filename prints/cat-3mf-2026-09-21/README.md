@@ -4,7 +4,7 @@ Two printable meshes of the orange Bengal / tabby photo. Bright fur and the gree
 
 ## Just the cat
 
-`cat-lithophane-silhouette.3mf` cuts the background away. The outline is the cat, including the gap under the chest between the paws. Where the photo itself crops the body, that edge follows the crop.
+`cat-lithophane-no-bg.3mf` cuts the background away. The outline is the cat, including the gap under the chest between the paws. Where the photo itself crops the body, that edge follows the crop.
 
 | Axis | Role | Size |
 | --- | --- | --- |
